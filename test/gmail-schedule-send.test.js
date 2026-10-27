@@ -58,7 +58,7 @@ test('known Scheduled subject aborts before opening a compose', async () => {
   const pages = [];
   const page = {
     open: async url => pages.push(url),
-    eval: async source => source === 'location.href' ? 'https://mail.google.com/mail/u/0/#scheduled' : { rows: [request.subject], empty: false },
+    eval: async source => source === 'location.href' ? 'https://mail.google.com/mail/u/0/#scheduled' : { rows: [{ subject: request.subject, to: request.to }] },
     wait: async () => {},
     click: async () => { throw Error('must not compose duplicate'); }
   };

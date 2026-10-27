@@ -18,9 +18,9 @@ Create a private request file outside the repository:
 }
 ```
 
-Run `node bin/run.js gmail/schedule-send --input /path/to/request.json`. With `dryRun: true`, the driver stops at the date/time picker and leaves an unsent draft; inspect or discard the draft in Gmail. Remove `dryRun` to request a real native Schedule send. The timestamp **must contain an offset**, be at least two minutes in the future, and the browser's timezone determines the date/time displayed in Gmail. Use a unique subject; the driver refuses a matching subject visible in the Scheduled folder. It is not an exactly-once guarantee across folder pagination or concurrent invocations. Do not retry after an ambiguous error without checking Scheduled manually.
+Run `node bin/run.js gmail/schedule-send --input /path/to/request.json`. With `dryRun: true`, the driver stops at the date/time picker and leaves an unsent draft; inspect or discard the draft in Gmail. Remove `dryRun` to request a real native Schedule send. The timestamp **must contain an offset**, be at least two minutes in the future, and the browser's timezone determines the date/time displayed in Gmail. The driver refuses a matching recipient and subject visible in the Scheduled folder. It is not an exactly-once guarantee across folder pagination or concurrent invocations. Do not retry after an ambiguous error without checking Scheduled manually.
 
-On success the command prints JSON only after Gmail's schedule confirmation and the subject appears in Scheduled. Nonzero exit means it could not verify completion; it does **not** prove no message was scheduled. Login redirects, unknown date formats, missing controls, readback mismatches and timeouts stop rather than guessing. `npm test` checks validation, time conversion, login abort and duplicate abort without sending mail.
+On success the command prints JSON only after Gmail's schedule confirmation matches the requested time and the recipient/subject appears in Scheduled. Nonzero exit means it could not verify completion; it does **not** prove no message was scheduled. Login redirects, unknown date formats, missing controls, readback mismatches and timeouts stop rather than guessing. `npm test` checks validation, time conversion, login abort and duplicate abort without sending mail.
 
 ## Add another driver
 

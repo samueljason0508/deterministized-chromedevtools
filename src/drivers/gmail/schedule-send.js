@@ -45,7 +45,7 @@ async function clickNamed(page, name, roles = ['button', 'menuitem']) {
 async function pressNamed(page, name) {
   const focused = await until(page, `${name} button`, () => page.eval(`() => {
     const matches = [...document.querySelectorAll('[role="button"], button')]
-      .filter(el => el.getClientRects().length && (el.getAttribute('aria-label') || el.innerText.trim()) === ${JSON.stringify(name)});
+      .filter(el => el.getClientRects().length && !el.closest('[aria-hidden="true"]') && (el.getAttribute('aria-label') || el.innerText.trim()) === ${JSON.stringify(name)});
     if (matches.length > 1) throw Error('Ambiguous button: ' + ${JSON.stringify(name)});
     if (!matches.length) return false;
     matches[0].focus();
@@ -140,15 +140,21 @@ export async function run(page, input) {
   await page.open(gmail + '#scheduled');
   await requireGmail(page);
   // A previous successful run can have returned an error after the server commit.
-  // Refuse to duplicate a visible scheduled subject; never retry blindly.
+  // Refuse to duplicate a visible recipient + subject pair; never retry blindly.
   const preflight = await until(page, 'Scheduled folder', () => page.eval(`() => {
     const main = document.querySelector('[role="main"]');
     if (!main || location.hash !== '#scheduled' ||
         !/messages in scheduled will be sent at their scheduled time/i.test(main.innerText)) return null;
-    const rows = [...main.querySelectorAll('tr.zA .bog')].map(el => el.textContent.trim());
+    const rows = [...main.querySelectorAll('tr.zA')].map(row => ({
+      subject: row.querySelector('.bog')?.textContent.trim(),
+      to: row.querySelector('[email]')?.getAttribute('email')
+    }));
     return { rows };
   }`));
-  if (preflight.rows.includes(input.subject)) throw Error('Subject already visible in Scheduled; refusing duplicate send');
+  if (preflight.rows.some(row => row.subject === input.subject &&
+      (!row.to || row.to.toLowerCase() === input.to.toLowerCase()))) {
+    throw Error('Recipient and subject already visible in Scheduled; refusing duplicate send');
+  }
   await page.open(gmail + '#inbox');
   await requireGmail(page);
   await clickNamed(page, 'Compose');
@@ -164,17 +170,23 @@ export async function run(page, input) {
       body: dialog?.querySelector('[aria-label="Message Body"][contenteditable="true"]')?.innerText
     };
   }`);
-  if (!composed.to.includes(input.to) || composed.subject !== input.subject || composed.body !== input.body) {
+  // Gmail renders each blank line in typed plain text as a separate empty div.
+  if (!composed.to.includes(input.to) || composed.subject !== input.subject || composed.body !== input.body.replaceAll('\n\n', '\n\n\n')) {
     throw Error('Compose readback failed: recipient, subject or body differs');
   }
   await pressNamed(page, 'More send options');
   await chooseMenuItem(page, 'Schedule send');
   await chooseMenuItem(page, 'Select date and time');
   const picker = await until(page, 'date and time picker', () => page.eval(`() => {
-    const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(el => el.getClientRects().length);
-    const date = dialogs.flatMap(el => [...el.querySelectorAll('input[aria-label="Date"]')]).find(el => el.getClientRects().length);
-    const time = dialogs.flatMap(el => [...el.querySelectorAll('input[aria-label="Time"]')]).find(el => el.getClientRects().length);
-    return date && time && date.id && time.id ? { dateId: date.id, dateValue: date.value, timeId: time.id, timeValue: time.value,
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')]
+      .filter(el => el.getClientRects().length && !el.closest('[aria-hidden="true"]') && el.getAttribute('aria-hidden') !== 'true');
+    const pickers = dialogs.map(el => ({
+      date: el.querySelector('input[aria-label="Date"]'),
+      time: el.querySelector('input[aria-label="Time"]')
+    })).filter(item => item.date?.getClientRects().length && item.time?.getClientRects().length);
+    if (pickers.length > 1) throw Error('Ambiguous date and time picker');
+    const { date, time } = pickers[0] || {};
+    return date?.id && time?.id ? { dateId: date.id, dateValue: date.value, timeId: time.id, timeValue: time.value,
       language: document.documentElement.lang || navigator.language } : null;
   }`));
   // Run Date arithmetic in the browser so the picker and target share a timezone.
@@ -196,13 +208,15 @@ export async function run(page, input) {
     const tree = await page.snapshot();
     return tree.match(/Send scheduled for[^\n]*/i)?.[0];
   });
-  await page.open(gmail + '#scheduled');
+  if (!toast.includes(plan.time)) throw Error(`Gmail confirmed a different schedule (${toast}); inspect Scheduled before retrying`);
+  const query = `in:scheduled to:${input.to}`;
+  await page.open(gmail + '#search/' + encodeURIComponent(query));
   await requireGmail(page);
   await until(page, 'message in Scheduled', () => page.eval(`() => {
     const main = document.querySelector('[role="main"]');
-    return location.hash === '#scheduled' &&
-      /messages in scheduled will be sent at their scheduled time/i.test(main?.innerText || '') &&
-      [...main.querySelectorAll('tr.zA .bog')].some(el => el.textContent.trim() === ${JSON.stringify(input.subject)});
+    return location.hash.startsWith('#search/') &&
+      document.querySelector('[role="search"] input[name="q"]')?.value.trim().toLowerCase() === ${JSON.stringify(query.toLowerCase())} &&
+      [...(main?.querySelectorAll('tr.zA .bog') || [])].some(el => el.textContent.trim() === ${JSON.stringify(input.subject)});
   }`));
   return { scheduled: true, to: input.to, subject: input.subject, instant: plan.instant, date: plan.date, time: plan.time, toast };
 }
